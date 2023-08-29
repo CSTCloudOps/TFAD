@@ -1,0 +1,4 @@
+*.csv
+tfad/tfad_datasets/ydata-labeled-time-series-anomalies-v1_0/plot/*
+tfad/tfad_datasets/__MACOSX/*
+tfad/output/*

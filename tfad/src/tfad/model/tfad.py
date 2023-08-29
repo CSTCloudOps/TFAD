@@ -2,7 +2,7 @@ from typing import Dict, Optional, Tuple
 from collections.abc import Callable
 
 import numpy as np
-
+import time
 import torch
 from torch import nn
 import torch.fft
@@ -11,7 +11,7 @@ import torch.fft
 import torch_optimizer as optim
 
 import pytorch_lightning as pl
-from torchmetrics import Accuracy, Precision, Recall, FBeta, ConfusionMatrix
+from torchmetrics import Accuracy, Precision, Recall, ConfusionMatrix
 
 import tfad
 from tfad.ts import TimeSeriesDataset
@@ -24,6 +24,8 @@ from tfad.utils.donut_metrics import (
     adjust_predicts_donut,
     adjust_predicts_multiple_ts,
     best_f1_search_grid,
+    best_f1_search_grid2,
+    k_adjust_predicts,
 )
 
 def D_matrix(N):
@@ -93,12 +95,13 @@ class TFAD(pl.LightningModule):
         # hparams for validation and test
         stride_rolling_val_test: Optional[int] = None,
         val_labels_adj: bool = True,
-        val_labels_adj_fun: Callable = adjust_predicts_donut,
+        val_labels_adj_fun: Callable = k_adjust_predicts,
         test_labels_adj: bool = True,
-        test_labels_adj_fun: Callable = adjust_predicts_donut,
+        test_labels_adj_fun: Callable = k_adjust_predicts,
         max_windows_unfold_batch: Optional[int] = None,
         # hparams for optimizer
         learning_rate: float = 3e-4,
+        k:int=7,
         *args,
         **kwargs,
     ) -> None:
@@ -108,6 +111,8 @@ class TFAD(pl.LightningModule):
         self.save_hyperparameters()
 
         self.learning_rate = learning_rate
+        self.k = k
+        self.time = 0
 
         # Encoder Network
         self.encoder1 = tfad.model.TCNEncoder(
@@ -372,6 +377,7 @@ class TFAD(pl.LightningModule):
             threshold_values=np.round(
                 np.arange(0.0, 1.0, self.hparams.threshold_grid_length_val), decimals=5
             ),
+            k=self.k,
             # threshold_bounds = [0.01, 0.99],
         )
 
@@ -389,6 +395,7 @@ class TFAD(pl.LightningModule):
         x, y = self.xy_from_batch(batch)
 
         # Compute predictions
+        time1 = time.time()
         probs_anomaly, _ = self.detect(
             ts=x,
             threshold_prob_vote=self.hparams.classifier_threshold,
@@ -405,15 +412,16 @@ class TFAD(pl.LightningModule):
         y = y[:, ~nan_time_idx]
         probs_anomaly = probs_anomaly[:, ~nan_time_idx]
         target = y
-        
+        time2 = time.time()
         # import numpy as np
         # np.savetxt("probs_anomaly"+str(batch_idx)+".csv", probs_anomaly_all.cpu().numpy().reshape(-1, 1), delimiter=',')
         # np.savetxt("target"+str(batch_idx)+".csv", y_all.cpu().numpy().reshape(-1, 1), delimiter=',')
-
+        self.time += time2-time1
         self.test_metrics["cache_preds"](preds=probs_anomaly, target=target)
 
     def on_test_epoch_end(self):
         stage = "test"
+        print('time',self.time)
         ### Compute metrics and find "best" threshold
         score, target = self.test_metrics["cache_preds"].compute()
 
@@ -435,7 +443,18 @@ class TFAD(pl.LightningModule):
         metrics_best, threshold_best = best_f1_search_grid(
             score=score_np,
             target=target_np,
-            adjust_predicts_fun=self.test_labels_adj_fun if self.hparams.test_labels_adj else None,
+            adjust_predicts_fun=k_adjust_predicts if self.hparams.test_labels_adj else None,
+            threshold_values=np.round(
+                np.arange(0.0, 1.0, self.hparams.threshold_grid_length_test), decimals=5
+            ),
+            k=self.k,
+            # threshold_bounds = [0.01, 0.99],
+        )
+
+        metrics_best2, threshold_best2 = best_f1_search_grid2(
+            score=score_np,
+            target=target_np,
+            adjust_predicts_fun=adjust_predicts_donut if self.hparams.test_labels_adj else None,
             threshold_values=np.round(
                 np.arange(0.0, 1.0, self.hparams.threshold_grid_length_test), decimals=5
             ),
@@ -463,6 +482,12 @@ class TFAD(pl.LightningModule):
         # Log metrics
         for key, value in metrics_best.items():
             self.log(f"{stage}_{key}", value, prog_bar=True if key == "f1" else False, logger=True)
+        with open('./all_result.txt','a') as f:
+            for key, value in metrics_best.items():
+                f.write('{} {}\n'.format(str(key),str(value)))
+            for key, value in metrics_best2.items():
+                f.write('{} {}\n'.format(str(key),str(value)))
+            f.write('\n')
 
     def configure_optimizers(self):
         # optim_class = optim.Adam

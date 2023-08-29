@@ -45,6 +45,7 @@ def download(
     """
 
     # Transform data_dir to Path
+    print(data_dir)
     data_dir = PosixPath(data_dir).expanduser() if str(data_dir).startswith("~") else Path(data_dir)
 
     if isinstance(benchmarks, str):
@@ -117,12 +118,13 @@ def download(
             raise ValueError(f"yahoo_path must be provided if 'yahoo' is in benchmarks")
         else:
             print("Preparing Yahoo dataset...")
-
+            print(yahoo_path)
             yahoo_path = (
                 PosixPath(yahoo_path).expanduser()
                 if str(yahoo_path).startswith("~")
                 else Path(yahoo_path)
             )
+            print(yahoo_path)
             with tarfile.open(str(yahoo_path)) as tar:
                 tar.extractall(path=data_dir / "yahoo")
             aux_dir = os.listdir(data_dir / "yahoo")[0]
@@ -136,3 +138,7 @@ def download(
             for file in rm_these:
                 rm_file_or_dir(data_dir / "yahoo" / file)
             print("...Yahoo dataset ready!")
+    if "WSD" in benchmarks:
+        print("...WSD dataset ready!")
+    if "NAB" in benchmarks:
+        print("...NAB dataset ready!")

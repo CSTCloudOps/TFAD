@@ -109,7 +109,112 @@ def adjust_predicts_donut(pred_label: np.array, target: np.array, *args, **kwarg
     return pred_label_adj
 
 
+def k_adjust_predicts(predict: np.array, label: np.array,k:int, *args, **kwargs) -> np.array:
+    """Calculate adjusted predicted labels.
+
+    Label adjustment mechanism used in [Xu et al, 2018].
+
+    Args:
+        pred_label : 1d vector with the predicted binary labels.
+        target : 1d vector with true binary labels.
+
+    Returns:
+        pred_label_adj: 1d vector with the adjusted binary labels.
+
+    Reference:
+        Xu et al. 2018, Unsupervised Anomaly Detection via Variational Auto-Encoder for Seasonal KPIs in Web Applications.
+    """
+    assert predict.ndim == 1
+    assert label.ndim == 1
+
+    n_pred = len(predict)
+    assert len(label) == n_pred, "score and target must have the same length"
+    
+
+    splits = np.where(label[1:] != label[:-1])[0] + 1
+    is_anomaly = label[0] == 1
+    new_predict = np.array(predict)
+    pos = 0
+
+    for sp in splits:
+        if is_anomaly:
+            if 1 in predict[pos:min(pos + k + 1, sp)]:
+                new_predict[pos: sp] = 1
+            else:
+                new_predict[pos: sp] = 0
+        is_anomaly = not is_anomaly
+        pos = sp
+    sp = len(label)
+
+    if is_anomaly:  # anomaly in the end
+        if 1 in predict[pos: min(pos + k + 1, sp)]:
+            new_predict[pos: sp] = 1
+        else:
+            new_predict[pos: sp] = 0
+
+    return new_predict
+
+    pred_label_adj = pred_label.copy()
+
+    anomaly_state = 0
+    anomaly_count = 0
+    for i in range(n_pred):
+        if (target[i] == 1) and (pred_label_adj[i] == 1) and not (anomaly_state == 1):
+            anomaly_state = 1
+            anomaly_count += 1
+            for j in range(i, 0, -1):
+                if target[j] == 1:
+                    pred_label_adj[j] = 1
+                else:
+                    break
+        elif not (target[i] == 1):
+            anomaly_state = 0
+
+        if anomaly_state == 1:
+            pred_label_adj[i] = 1
+
+    return pred_label_adj
+
+
 def adjust_predicts_multiple_ts(
+    pred_label: List[np.array],
+    target: List[np.array],
+    adjust_predicts_fun: Optional[Callable] = [None, None, None][
+        1
+    ],
+    k:int=7,
+    *args,
+    **kwargs
+) -> List[np.array]:
+    """Calculate adjusted predicted labels on a set of time series.
+
+    Args:
+        pred_label : Predicted binary labels. A list with 1D vectors (possibly of different length).
+        target : True binary labels. Same structure as pred_label.
+        adjust_predicts_fun : Function for label adjustment on univariate time series.
+            By default (None) the search is performed with no label adjustment.
+            If specified, adjust_predicts_donut is currently supported, but other methos can be defined.
+    Returns:
+        pred_label_adj: Adjusted binary labels. Same structure as pred_label.
+    """
+
+    assert isinstance(pred_label, list)
+    assert type(pred_label) == type(target)
+    assert len(pred_label) == len(target)
+
+    if adjust_predicts_fun is None:
+        return pred_label
+
+    N = len(pred_label)
+
+    pred_label_adj = []
+    k=3
+    for j in range(N):
+        pred_label_adj.append(adjust_predicts_fun(pred_label[j], target[j],k))
+    return pred_label_adj
+
+
+def adjust_predicts_multiple_ts2(
     pred_label: List[np.array],
     target: List[np.array],
     adjust_predicts_fun: Optional[Callable] = [None, None, None][
@@ -140,12 +245,80 @@ def adjust_predicts_multiple_ts(
     N = len(pred_label)
 
     pred_label_adj = []
+    k=3
     for j in range(N):
-        pred_label_adj.append(adjust_predicts_fun(pred_label[j], target[j]))
+        pred_label_adj.append(adjust_predicts_fun(pred_label[j], target[j],k))
     return pred_label_adj
 
 
+
 def binary_metrics_adj(
+    score: Union[np.array, List[np.array]],
+    target: Union[np.array, List[np.array]],
+    threshold: float = 0.5,
+    adjust_predicts_fun: Optional[Callable] = [None, None, None][
+        1
+    ],
+    only_f1: bool = False,
+    k:int=7,
+) -> Union[Dict, float]:
+    """Compute a number of relevant metrics for binary classification.
+
+    Args:
+        score : Predicted (continuous) scores.
+            If 1D array, a vector of scores for a single time series.
+            If 2D array, a matrix of scores for multiple time series, of shape (time, batch)
+            If List, must contain 1D vectors as elements (possibly of different length)
+        target : True binary labels. Must share the same data structure and shape of score.
+        threshold : values in which score>threshold are considered as predicting target=1
+        adjust_predicts_fun : Function for label adjustment on univariate time series.
+            By default (None) the search is performed with no label adjustment.
+            If specified, adjust_predicts_donut is currently supported.
+        only_f1 : If True, the function returns an scalar with the adjusted f1 score.
+
+    Output:
+        metrics : Dictionary with collection of metrics for binary classification,
+            calculated over all pairs (score, target).
+    """
+    assert type(score) == type(target)
+
+    # transform array to list of time series
+    if isinstance(score, np.ndarray):
+        assert score.shape == target.shape
+
+        if score.ndim == 1:
+            # If score and target are a 1-D array, expand it to a matrix with shape (time, batch=1)
+            score = np.expand_dims(score, axis=1)
+            target = np.expand_dims(target, axis=1)
+
+        # Create a list of 1-D scores, one per element in the batch dimension (column)
+        score = [score[:, i] for i in range(score.shape[1])]
+        target = [target[:, i] for i in range(target.shape[1])]
+
+    assert isinstance(score, List)
+    assert all(score_i.ndim == 1 for score_i in score)
+    assert all(target_i.ndim == 1 for target_i in target)
+
+    N = len(score)
+    pred_label = [1 * (score[i] > threshold) for i in range(N)]
+
+    pred_label = adjust_predicts_multiple_ts(
+        pred_label=pred_label,
+        target=target,
+        threshold=threshold,
+        adjust_predicts_fun=adjust_predicts_fun,
+        k =k,
+    )
+
+    out = binary_metrics(
+        pred_label=np.concatenate(pred_label, axis=0),
+        target=np.concatenate(target, axis=0),
+        only_f1=only_f1,
+    )
+
+    return out
+
+def binary_metrics_adj2(
     score: Union[np.array, List[np.array]],
     target: Union[np.array, List[np.array]],
     threshold: float = 0.5,
@@ -194,7 +367,7 @@ def binary_metrics_adj(
     N = len(score)
     pred_label = [1 * (score[i] > threshold) for i in range(N)]
 
-    pred_label = adjust_predicts_multiple_ts(
+    pred_label = adjust_predicts_multiple_ts2(
         pred_label=pred_label,
         target=target,
         threshold=threshold,
@@ -209,7 +382,6 @@ def binary_metrics_adj(
 
     return out
 
-
 def best_f1_search_grid(
     score: Union[np.array, List[np.array]],
     target: Union[np.array, List[np.array]],
@@ -217,6 +389,7 @@ def best_f1_search_grid(
         1
     ],
     threshold_values: np.array = np.array(0.5),
+    k=7,
     verbose=False,
     display_freq=1,
 ) -> Tuple[Metrics, float]:
@@ -251,6 +424,7 @@ def best_f1_search_grid(
             threshold=threshold_i,
             adjust_predicts_fun=adjust_predicts_fun,
             only_f1=True,
+            k = k,
         )
 
     i_best = np.argmax(f1_values)
@@ -262,6 +436,69 @@ def best_f1_search_grid(
         threshold_best = threshold_best_same_f1[idx]
 
     metrics_best = binary_metrics_adj(
+        score=score,
+        target=target,
+        threshold=threshold_best,
+        adjust_predicts_fun=adjust_predicts_fun,
+        only_f1=False,
+        k=k,
+    )
+
+    return metrics_best, threshold_best
+
+
+def best_f1_search_grid2(
+    score: Union[np.array, List[np.array]],
+    target: Union[np.array, List[np.array]],
+    adjust_predicts_fun: Optional[Callable] = [None, None, None][
+        1
+    ],
+    threshold_values: np.array = np.array(0.5),
+    verbose=False,
+    display_freq=1,
+) -> Tuple[Metrics, float]:
+    """Find the best-f1 metric along threshold_values.
+
+    Args:
+        score : Predicted (continuous) scores.
+            If 1D array, a vector of scores for a single time series.
+            If 2D array, a matrix of scores for multiple time series, of shape (time, batch)
+            If List, must contain elements of 1D vectors (possibly of different length)
+        target : True binary labels. Must share the same data structure and shape of score.
+        adjust_predicts_fun : Function for label adjustment on univariate time series.
+            By default (None) the search is performed with no label adjustment.
+            If specified, adjust_predicts_donut is currently supported.
+        threshold_values : threshold values used to evaluate the f1 metric.
+    Returns:
+        metrics : Dictionary with the binary metrics for the best threshold.
+        threshold : the `threshold` with the highest f1 (within the range of search).
+    """
+
+    metrics_best = dict(f1=-1.0, precision=-1.0, recall=-1.0)
+    threshold_best = None
+
+    threshold_values = np.array(threshold_values).copy()
+    threshold_values.sort()
+    f1_values = np.zeros_like(threshold_values)
+
+    for i, threshold_i in enumerate(threshold_values):
+        f1_values[i] = binary_metrics_adj2(
+            score=score,
+            target=target,
+            threshold=threshold_i,
+            adjust_predicts_fun=adjust_predicts_fun,
+            only_f1=True,
+        )
+
+    i_best = np.argmax(f1_values)
+    threshold_best = threshold_values[i_best]
+
+    threshold_best_same_f1 = threshold_values[f1_values == f1_values[i_best]]
+    if len(threshold_best_same_f1) > 1:
+        idx = np.argmin(np.abs(threshold_best_same_f1 - np.median(threshold_best_same_f1)))
+        threshold_best = threshold_best_same_f1[idx]
+
+    metrics_best = binary_metrics_adj2(
         score=score,
         target=target,
         threshold=threshold_best,

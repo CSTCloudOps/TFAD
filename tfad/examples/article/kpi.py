@@ -234,6 +234,7 @@ def kpi_pipeline(
         max_windows_unfold_batch=max_windows_unfold_batch,
         # hpars for optimizer
         learning_rate=learning_rate,
+        k=7,
     )
 
     # Experiment name #

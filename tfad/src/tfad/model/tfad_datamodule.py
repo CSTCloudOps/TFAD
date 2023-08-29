@@ -60,7 +60,7 @@ class TFADDataModule(pl.LightningDataModule):
             stride_val_test=stride_val_test,
             num_workers=num_workers,
         )
-#         self.hparams = hparams
+        self.hparams = hparams
         self.hparams.update(hparams)
 
         self.datasets = {}

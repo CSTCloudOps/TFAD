@@ -12,6 +12,7 @@
 # permissions and limitations under the License.
 
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 import sys
 from pathlib import Path, PosixPath
 import argparse
@@ -39,6 +40,9 @@ def parse_arguments():
     parser.add_argument("--number_of_trials", type=int, default=10)
     parser.add_argument("--run_swat", type=str_to_bool, default=True)
     parser.add_argument("--run_yahoo", type=str_to_bool, default=True)
+    parser.add_argument("--run_kpi", type=str_to_bool, default=True)
+    parser.add_argument("--run_WSD", type=str_to_bool, default=True)
+    parser.add_argument("--run_NAB", type=str_to_bool, default=True)
     args, _ = parser.parse_known_args()
     # args = parser.parse_args()
 
@@ -55,6 +59,9 @@ def main(
     number_of_trials=10,
     run_swat=True,
     run_yahoo=True,
+    run_kpi=True,
+    run_WSD=True,
+    run_NAB=True,
 ):
 
 
@@ -67,11 +74,17 @@ def main(
 
     # Benchmark datasets to consider
     # benchmarks = ["nasa", "smd", "swat", "yahoo"]
-    benchmarks = ["swat", "yahoo"]
-    if not run_swat:
-        benchmarks.remove("swat")
+    benchmarks = ["yahoo","kpi","WSD","NAB"]
+    # if not run_swat:
+    #     benchmarks.remove("swat")
     if not run_yahoo:
         benchmarks.remove("yahoo")
+    if not run_kpi:
+        benchmarks.remove("kpi")
+    if not run_WSD:
+        benchmarks.remove("WSD")
+    if not run_NAB:
+        benchmarks.remove("NAB")
 
     # Import pipelines
     for bmk in benchmarks:

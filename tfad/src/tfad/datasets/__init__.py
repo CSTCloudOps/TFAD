@@ -4,6 +4,8 @@ from .kpi import kpi
 from .smd import smd
 from .swat import swat
 from .yahoo import yahoo
+from .WSD import WSD
+from .NAB import NAB
 
 __all__ = [
     "download",
@@ -12,4 +14,6 @@ __all__ = [
     "smd",
     "swat",
     "yahoo",
+    "WSD",
+    "NAB",
 ]
